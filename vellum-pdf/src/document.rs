@@ -105,8 +105,6 @@ impl Document {
 
     pub fn xref(&self) -> &XRefTable { &self.xref }
     pub fn source_len(&self) -> usize { self.source.len() }
-
-    pub(crate) fn lopdf(&self) -> &lopdf::Document { &self.inner }
 }
 
 /// Reference 透明解引用：若对象是 Reference 则跟随一级，否则原样返回。
