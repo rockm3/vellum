@@ -15,8 +15,46 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Vellum Debug Viewer",
         options,
-        Box::new(move |_cc| Ok(Box::new(Viewer::new(pdf_path)))),
+        Box::new(move |cc| {
+            load_cjk_font(&cc.egui_ctx);
+            Ok(Box::new(Viewer::new(pdf_path)))
+        }),
     )
+}
+
+/// 从系统字体目录加载第一个可用的 CJK 字体。
+/// 未找到时 egui 回退内置拉丁字体，中文显示为方块但不崩溃。
+fn load_cjk_font(ctx: &egui::Context) {
+    let candidates: &[&str] = &[
+        // Windows
+        r"C:\Windows\Fonts\msyh.ttc",       // 微软雅黑
+        r"C:\Windows\Fonts\msyh.ttf",
+        r"C:\Windows\Fonts\simhei.ttf",      // 黑体
+        r"C:\Windows\Fonts\simsun.ttc",      // 宋体
+        // macOS
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        // Linux
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    ];
+
+    let mut fonts = egui::FontDefinitions::default();
+    for path in candidates {
+        if let Ok(data) = std::fs::read(path) {
+            fonts.font_data.insert(
+                "cjk".to_owned(),
+                egui::FontData::from_owned(data),
+            );
+            // 插入到默认拉丁字体之前：CJK 字体通常包含拉丁字形，不影响英文显示
+            for family in fonts.families.values_mut() {
+                family.insert(0, "cjk".to_owned());
+            }
+            eprintln!("[viewer] 已加载字体：{path}");
+            break;
+        }
+    }
+    ctx.set_fonts(fonts);
 }
 
 // ── App 状态 ──────────────────────────────────────────────────────────────────

@@ -32,7 +32,11 @@ pub struct TextBlock {
 const LINE_Y_TOL: f32 = 2.0;
 
 /// 词间距阈值系数：origin_to_origin > WORD_GAP_K * font_size → 新词
-const WORD_GAP_K: f32 = 1.0;
+///
+/// 取 2.0 而非 1.0 的原因：
+/// - CJK：字间距约为 0.4-0.8 × 字号，2.0 既能聚合 CJK 字形又能识别视觉断词
+/// - Latin：字间距约为 0.3-0.8 × 字号，同样成立；拉丁文还额外用空格字形触发断词
+const WORD_GAP_K: f32 = 2.0;
 
 /// 块间距阈值系数：baseline_gap > BLOCK_GAP_K * font_size → 新块
 const BLOCK_GAP_K: f32 = 1.5;
@@ -117,13 +121,19 @@ fn build_words(glyphs: Vec<RawGlyph>) -> Vec<Word> {
     let mut current: Vec<RawGlyph> = Vec::new();
 
     for g in glyphs {
+        let is_space = g.unicode == Some(' ');
+
         if let Some(prev) = current.last() {
             let dx = g.origin.x - prev.origin.x;
-            if dx > WORD_GAP_K * prev.font_size {
+            // 空格字形直接触发断词（处理拉丁文）；间距过大也断词（处理 CJK）
+            if is_space || dx > WORD_GAP_K * prev.font_size {
                 flush_word(&mut current, &mut words);
             }
         }
-        current.push(g);
+        // 空格本身不加入词簇，仅作断词信号
+        if !is_space {
+            current.push(g);
+        }
     }
     flush_word(&mut current, &mut words);
     words
@@ -132,6 +142,7 @@ fn build_words(glyphs: Vec<RawGlyph>) -> Vec<Word> {
 /// 将积累的字形转为 Word，纯空白词直接丢弃。
 ///
 /// 无 Unicode 映射的非零字形输出为 `[XX]` 占位符，保留可见痕迹。
+/// 边界框只由内容字形（非空白）计算，避免残余空格字形撑宽边界。
 fn flush_word(cur: &mut Vec<RawGlyph>, out: &mut Vec<Word>) {
     if cur.is_empty() { return; }
     let glyphs: Vec<RawGlyph> = std::mem::take(cur);
@@ -143,7 +154,12 @@ fn flush_word(cur: &mut Vec<RawGlyph>, out: &mut Vec<Word>) {
         })
         .collect();
     if text.is_empty() { return; }
-    let bounds = bounding_rect(glyphs.iter().map(|g| g.bounds));
+    // 只用非空白字形计算边界框
+    let bounds = bounding_rect(
+        glyphs.iter()
+            .filter(|g| g.unicode.map_or(true, |c| !c.is_whitespace()))
+            .map(|g| g.bounds),
+    );
     out.push(Word { glyphs, bounds, text });
 }
 
@@ -406,15 +422,15 @@ mod tests {
 
     #[test]
     fn mixed_null_and_valid_glyphs() {
+        // null_g(glyph_id=0) 被过滤；A 和 B 间距 40 > 2.0*12=24 → 两词
         let glyphs = vec![
             null_g(0.0,  100.0, 12.0),
             g(10.0, 100.0, 12.0, 'A'),
             null_g(20.0, 100.0, 12.0),
-            g(30.0, 100.0, 12.0, 'B'),
+            g(50.0, 100.0, 12.0, 'B'),
         ];
         let blocks = cluster(glyphs);
         assert_eq!(blocks.len(), 1);
-        // A 和 B 之间真实间距 30-10=20 > 1.0*12=12 → 两词
         assert_eq!(blocks[0].lines[0].words.len(), 2);
         assert_eq!(blocks[0].lines[0].words[0].text, "A");
         assert_eq!(blocks[0].lines[0].words[1].text, "B");
