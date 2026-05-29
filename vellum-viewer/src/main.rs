@@ -76,8 +76,13 @@ struct Viewer {
     // 提取结果
     blocks: Vec<TextBlock>,
 
+    // 真实渲染的页面位图（上传为纹理前的暂存）
+    page_image: Option<egui::ColorImage>,
+    page_tex:   Option<egui::TextureHandle>,
+
     // 显示控制
     zoom:        f32,
+    show_render: bool,
     show_blocks: bool,
     show_lines:  bool,
     show_words:  bool,
@@ -94,7 +99,10 @@ impl Viewer {
             page_w:      595.0,
             page_h:      842.0,
             blocks:      vec![],
+            page_image:  None,
+            page_tex:    None,
             zoom:        1.0,
+            show_render: true,
             show_blocks: true,
             show_lines:  true,
             show_words:  true,
@@ -133,6 +141,35 @@ impl Viewer {
             Ok(blocks) => { self.blocks = blocks; self.error = None; }
             Err(e)     => self.error = Some(format!("提取失败：{e}")),
         }
+        self.render_page();
+    }
+
+    /// 真实光栅化当前页，转为 egui 图像（纹理在 update 中惰性上传）。
+    fn render_page(&mut self) {
+        self.page_image = None;
+        self.page_tex   = None;
+        let Some(doc) = &self.doc else { return };
+        let Ok(content) = doc.page_content_stream(self.page_idx) else { return };
+        let Ok(fonts)   = doc.page_fonts(self.page_idx) else { return };
+        let Some(pm) = vellum_render::render_page(self.page_w, self.page_h, &content, &fonts, 2.0)
+        else { return };
+
+        // tiny-skia 预乘 RGBA → egui 非预乘
+        let (w, h) = (pm.width() as usize, pm.height() as usize);
+        let mut rgba = Vec::with_capacity(w * h * 4);
+        for px in pm.pixels() {
+            let a = px.alpha();
+            if a == 0 {
+                rgba.extend_from_slice(&[0, 0, 0, 0]);
+            } else {
+                let inv = 255.0 / a as f32;
+                rgba.push((px.red()   as f32 * inv).min(255.0) as u8);
+                rgba.push((px.green() as f32 * inv).min(255.0) as u8);
+                rgba.push((px.blue()  as f32 * inv).min(255.0) as u8);
+                rgba.push(a);
+            }
+        }
+        self.page_image = Some(egui::ColorImage::from_rgba_unmultiplied([w, h], &rgba));
     }
 }
 
@@ -179,7 +216,8 @@ impl eframe::App for Viewer {
 
                 ui.separator();
 
-                // 图层开关（带色块图例）
+                // 图层开关
+                ui.checkbox(&mut self.show_render, "渲染");
                 legend_checkbox(ui, &mut self.show_blocks, "块",  Color32::from_rgb(210, 40, 40));
                 legend_checkbox(ui, &mut self.show_lines,  "行",  Color32::from_rgb(40, 80, 210));
                 legend_checkbox(ui, &mut self.show_words,  "词",  Color32::from_rgb(30, 160, 30));
@@ -255,6 +293,27 @@ impl eframe::App for Viewer {
                 // 白色页面背景 + 阴影边框
                 painter.rect_filled(resp.rect, 0.0, Color32::WHITE);
                 painter.rect_stroke(resp.rect, 0.0, Stroke::new(1.5, Color32::from_gray(160)));
+
+                // 真实渲染背景层（惰性上传纹理）
+                if self.show_render {
+                    if self.page_tex.is_none() {
+                        if let Some(img) = self.page_image.take() {
+                            self.page_tex = Some(ctx.load_texture(
+                                "page",
+                                img,
+                                egui::TextureOptions::LINEAR,
+                            ));
+                        }
+                    }
+                    if let Some(tex) = &self.page_tex {
+                        painter.image(
+                            tex.id(),
+                            resp.rect,
+                            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                            Color32::WHITE,
+                        );
+                    }
+                }
 
                 // PDF pt → 屏幕像素（flip Y：PDF y 向上，屏幕 y 向下）
                 let to_screen = |r: &vellum_pdf::Rect| -> Rect {

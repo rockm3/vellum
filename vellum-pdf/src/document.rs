@@ -91,6 +91,126 @@ impl Document {
         Ok(result)
     }
 
+    /// 提取页面所有字体的渲染数据（Type3 CharProc / 嵌入 TrueType 程序）。
+    ///
+    /// key 与页面资源字典一致，如 `"/F4"`。无法识别的字体记为 [`Font::Unsupported`]。
+    pub fn page_fonts(&self, page_index: u32) -> Result<crate::PageFonts> {
+        use crate::Font;
+        let page_id   = self.page_id(page_index)?;
+        let mut fonts = std::collections::HashMap::new();
+
+        let Some(font_dict) = self.page_font_dict(page_id) else { return Ok(fonts) };
+
+        for (name_bytes, font_val) in font_dict.iter() {
+            let key = format!("/{}", String::from_utf8_lossy(name_bytes));
+            let font = self.extract_font(font_val).unwrap_or(Font::Unsupported);
+            fonts.insert(key, font);
+        }
+        Ok(fonts)
+    }
+
+    fn extract_font(&self, font_val: &lopdf::Object) -> Option<crate::Font> {
+        use crate::Font;
+        let fd = resolve(&self.inner, font_val)?.as_dict().ok()?;
+        let subtype = fd.get(b"Subtype").ok()?.as_name().ok()?;
+
+        match subtype {
+            b"Type3" => self.extract_type3(fd),
+            b"Type0" => self.extract_type0(fd),
+            b"TrueType" => {
+                let prog = self.font_descriptor_program(fd)?;
+                Some(Font::TrueType { program: prog, two_byte: false })
+            }
+            _ => None,
+        }
+    }
+
+    /// Type3：FontMatrix + Encoding/Differences + CharProcs。
+    fn extract_type3(&self, fd: &lopdf::Dictionary) -> Option<crate::Font> {
+        use crate::Font;
+
+        let fm_arr = fd.get(b"FontMatrix").ok()?.as_array().ok()?;
+        let mut font_matrix = [0.0f32; 6];
+        for (i, o) in fm_arr.iter().take(6).enumerate() {
+            font_matrix[i] = num(o);
+        }
+
+        // Encoding/Differences：单字节编码 → 字形名
+        let enc = resolve(&self.inner, fd.get(b"Encoding").ok()?)?.as_dict().ok()?;
+        let diffs = enc.get(b"Differences").ok()?.as_array().ok()?;
+        let mut code_to_name: std::collections::HashMap<u8, Vec<u8>> = std::collections::HashMap::new();
+        let mut cur: i64 = 0;
+        for o in diffs {
+            match o {
+                lopdf::Object::Integer(n) => cur = *n,
+                lopdf::Object::Name(name) => {
+                    if (0..=255).contains(&cur) {
+                        code_to_name.insert(cur as u8, name.clone());
+                    }
+                    cur += 1;
+                }
+                _ => {}
+            }
+        }
+
+        // CharProcs：字形名 → 内容流
+        let char_procs_dict = resolve(&self.inner, fd.get(b"CharProcs").ok()?)?.as_dict().ok()?;
+        let mut char_procs = std::collections::HashMap::new();
+        for (code, name) in &code_to_name {
+            if let Ok(proc_val) = char_procs_dict.get(name) {
+                if let Some(lopdf::Object::Stream(s)) = resolve(&self.inner, proc_val) {
+                    if let Ok(bytes) = s.decompressed_content() {
+                        char_procs.insert(*code, bytes);
+                    }
+                }
+            }
+        }
+
+        // Widths（按 FirstChar 起算）
+        let mut widths = std::collections::HashMap::new();
+        if let (Ok(first), Ok(w_arr)) = (fd.get(b"FirstChar"), fd.get(b"Widths")) {
+            if let (lopdf::Object::Integer(fc), Ok(arr)) = (first, w_arr.as_array()) {
+                for (i, o) in arr.iter().enumerate() {
+                    let code = *fc + i as i64;
+                    if (0..=255).contains(&code) {
+                        widths.insert(code as u8, num(o));
+                    }
+                }
+            }
+        }
+
+        Some(Font::Type3 { font_matrix, char_procs, widths })
+    }
+
+    /// Type0：取 DescendantFont 的 FontFile2，判断是否 Identity 双字节。
+    fn extract_type0(&self, fd: &lopdf::Dictionary) -> Option<crate::Font> {
+        use crate::Font;
+
+        let two_byte = fd.get(b"Encoding").ok()
+            .and_then(|o| o.as_name().ok())
+            .map(|n| n.starts_with(b"Identity"))
+            .unwrap_or(false);
+
+        let df = resolve(&self.inner, fd.get(b"DescendantFonts").ok()?)?;
+        let cidfont = match df {
+            lopdf::Object::Array(a) => resolve(&self.inner, a.first()?)?.as_dict().ok()?,
+            lopdf::Object::Dictionary(d) => d,
+            _ => return None,
+        };
+        let program = self.font_descriptor_program(cidfont)?;
+        Some(Font::TrueType { program, two_byte })
+    }
+
+    /// 从字体字典的 FontDescriptor 取 FontFile2 字节。
+    fn font_descriptor_program(&self, fd: &lopdf::Dictionary) -> Option<Vec<u8>> {
+        let descriptor = resolve(&self.inner, fd.get(b"FontDescriptor").ok()?)?.as_dict().ok()?;
+        let ff = descriptor.get(b"FontFile2").ok()?;
+        if let Some(lopdf::Object::Stream(s)) = resolve(&self.inner, ff) {
+            return s.decompressed_content().ok();
+        }
+        None
+    }
+
     /// 返回页面字体资源字典（借用 lopdf 内部对象）。
     fn page_font_dict(&self, page_id: lopdf::ObjectId) -> Option<&lopdf::Dictionary> {
         let page_obj  = self.inner.get_object(page_id).ok()?;
@@ -135,5 +255,14 @@ fn resolve<'a>(doc: &'a lopdf::Document, obj: &'a lopdf::Object) -> Option<&'a l
     match obj {
         lopdf::Object::Reference(id) => doc.get_object(*id).ok(),
         other => Some(other),
+    }
+}
+
+/// Object → f32（Integer / Real，其余为 0）。
+fn num(o: &lopdf::Object) -> f32 {
+    match o {
+        lopdf::Object::Integer(n) => *n as f32,
+        lopdf::Object::Real(f)    => *f as f32,
+        _ => 0.0,
     }
 }

@@ -37,6 +37,17 @@ enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+    /// Rasterize a page to PNG (real rendering)
+    Render {
+        file: PathBuf,
+        #[arg(short, long, default_value_t = 0)]
+        page: u32,
+        /// Output resolution scale (1.0 = 72 DPI)
+        #[arg(short, long, default_value_t = 2.0)]
+        dpi: f32,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
     /// Dump glyph→Unicode mapping decisions as JSON
     Mapping {
         file: PathBuf,
@@ -137,6 +148,25 @@ fn main() -> anyhow::Result<()> {
             });
             overlay.save_png(&out).map_err(|e| anyhow::anyhow!("{e}"))?;
             eprintln!("已保存调试图像：{}", out.display());
+        }
+
+        Command::Render { file, page, dpi, output } => {
+            let doc = vellum_pdf::Document::open(&file)?;
+            let (w, h) = doc.page_size(page).unwrap_or((595.0, 842.0));
+            let content = doc.page_content_stream(page)?;
+            let fonts   = doc.page_fonts(page)?;
+
+            let pixmap = vellum_render::render_page(w, h, &content, &fonts, dpi)
+                .ok_or_else(|| anyhow::anyhow!("渲染失败（页面尺寸为零？）"))?;
+
+            let out = output.unwrap_or_else(|| {
+                file.with_file_name(format!(
+                    "{}_p{page}.png",
+                    file.file_stem().unwrap_or_default().to_string_lossy()
+                ))
+            });
+            pixmap.save_png(&out).map_err(|e| anyhow::anyhow!("{e}"))?;
+            eprintln!("已渲染：{} ({}×{} px)", out.display(), pixmap.width(), pixmap.height());
         }
 
         Command::Mapping { file, page } => {

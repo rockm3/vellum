@@ -7,3 +7,5 @@ edition.workspace = true
 vellum-pdf.workspace   = true
 vellum-text.workspace  = true
 tiny-skia.workspace    = true
+ttf-parser.workspace   = true
+lopdf.workspace        = true
