@@ -48,8 +48,10 @@ const BLOCK_GAP_K: f32 = 1.5;
 ///   4. 行内按水平间距分组为词
 ///   5. 按行间距分组为块
 pub fn cluster(raw: Vec<RawGlyph>) -> Vec<TextBlock> {
+    // glyph_id == 0 是空字形（CID 字体子集占位符），直接丢弃。
+    // 其余保留：无 Unicode 映射的非零字形在 flush_word 里用 [XX] 占位显示。
     let glyphs: Vec<RawGlyph> = raw.into_iter()
-        .filter(|g| g.unicode.is_some() && g.font_size > 0.0)
+        .filter(|g| g.font_size > 0.0 && g.glyph_id != 0)
         .collect();
     if glyphs.is_empty() { return vec![]; }
 
@@ -127,13 +129,18 @@ fn build_words(glyphs: Vec<RawGlyph>) -> Vec<Word> {
     words
 }
 
-/// 将积累的字形转为 Word，空白内容的词直接丢弃。
+/// 将积累的字形转为 Word，纯空白词直接丢弃。
+///
+/// 无 Unicode 映射的非零字形输出为 `[XX]` 占位符，保留可见痕迹。
 fn flush_word(cur: &mut Vec<RawGlyph>, out: &mut Vec<Word>) {
     if cur.is_empty() { return; }
     let glyphs: Vec<RawGlyph> = std::mem::take(cur);
     let text: String = glyphs.iter()
-        .filter_map(|g| g.unicode)
-        .filter(|c| !c.is_whitespace())
+        .map(|g| match g.unicode {
+            Some(c) if !c.is_whitespace() => c.to_string(),
+            Some(_)                        => String::new(),
+            None                           => format!("[{:02X}]", g.glyph_id),
+        })
         .collect();
     if text.is_empty() { return; }
     let bounds = bounding_rect(glyphs.iter().map(|g| g.bounds));
@@ -233,9 +240,21 @@ mod tests {
     }
 
     #[test]
-    fn null_glyphs_filtered_out() {
+    fn glyph_id_zero_filtered_out() {
+        // glyph_id == 0 是 CID 字体占位符，无论 unicode 状态如何都应丢弃
         let glyphs = vec![null_g(0.0, 100.0, 12.0), null_g(10.0, 100.0, 12.0)];
         assert!(cluster(glyphs).is_empty());
+    }
+
+    #[test]
+    fn unmapped_nonzero_glyph_shows_as_placeholder() {
+        // glyph_id != 0 但无 Unicode 映射 → 词文字显示为 [XX]
+        let mut ug = null_g(0.0, 100.0, 12.0);
+        ug.glyph_id = 0xB3; // 非零、无映射
+        let glyphs = vec![ug];
+        let blocks = cluster(glyphs);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].lines[0].words[0].text, "[B3]");
     }
 
     #[test]
