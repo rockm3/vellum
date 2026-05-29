@@ -1,0 +1,11 @@
+[package]
+name    = "vellum-debug"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+vellum-pdf.workspace   = true
+vellum-text.workspace  = true
+lopdf.workspace        = true
+serde.workspace        = true
+serde_json.workspace   = true

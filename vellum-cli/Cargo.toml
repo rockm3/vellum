@@ -1,0 +1,16 @@
+[package]
+name    = "vellum-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "vellum"
+path = "src/main.rs"
+
+[dependencies]
+vellum-pdf.workspace    = true
+vellum-text.workspace   = true
+vellum-debug.workspace  = true
+vellum-render.workspace = true
+clap.workspace          = true
+anyhow.workspace        = true

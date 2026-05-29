@@ -1,0 +1,13 @@
+/target
+**/*.rs.bk
+Cargo.lock
+
+# 测试 PDF 资产（本地测试用，不入库）
+vellum-pdf/tests/assets/*.pdf
+
+# JetBrains IDE
+.idea/
+*.iml
+
+# 工作区根目录占位 src（不属于任何 workspace member）
+/src/

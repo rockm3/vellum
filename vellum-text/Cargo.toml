@@ -1,0 +1,9 @@
+[package]
+name    = "vellum-text"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+vellum-pdf.workspace  = true
+thiserror.workspace   = true
+lopdf.workspace       = true
