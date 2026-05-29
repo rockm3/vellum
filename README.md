@@ -129,4 +129,4 @@ extract_text() → 纯文本字符串
 
 ## License
 
-待定。
+[MIT](LICENSE)
