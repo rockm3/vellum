@@ -103,6 +103,29 @@ impl Document {
         resolve(&self.inner, font_val)?.as_dict().ok()
     }
 
+    /// 返回页面的物理尺寸（宽、高，单位 pt）。
+    ///
+    /// 读取页面字典的 `MediaBox` 条目；若不存在则返回标准 A4（595 × 842 pt）。
+    pub fn page_size(&self, page_index: u32) -> Result<(f32, f32)> {
+        let page_id   = self.page_id(page_index)?;
+        let page_obj  = self.inner.get_object(page_id)?;
+        let page_dict = page_obj.as_dict()?;
+
+        if let Ok(lopdf::Object::Array(arr)) = page_dict.get(b"MediaBox") {
+            if arr.len() >= 4 {
+                let n = |o: &lopdf::Object| match o {
+                    lopdf::Object::Integer(i) => *i as f32,
+                    lopdf::Object::Real(f)    => *f as f32,
+                    _ => 0.0,
+                };
+                let (x0, y0, x1, y1) = (n(&arr[0]), n(&arr[1]), n(&arr[2]), n(&arr[3]));
+                let (w, h) = (x1 - x0, y1 - y0);
+                if w > 0.0 && h > 0.0 { return Ok((w, h)); }
+            }
+        }
+        Ok((595.0, 842.0)) // 默认 A4
+    }
+
     pub fn xref(&self) -> &XRefTable { &self.xref }
     pub fn source_len(&self) -> usize { self.source.len() }
 }

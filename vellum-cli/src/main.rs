@@ -121,11 +121,22 @@ fn main() -> anyhow::Result<()> {
 
         Command::Debug { file, page, stage, output } => {
             let doc = vellum_pdf::Document::open(&file)?;
-            let sink = vellum_debug::SvgOverlaySink::new(595.0, 842.0);
-            let mut pipeline = vellum_text::TextPipeline::with_sink(sink);
-            let _ = pipeline.extract_page(&doc, page)?;
-            println!("debug stage='{stage}' page={page} — pipeline skeleton in place");
-            let _ = output;
+            let (page_w, page_h) = doc.page_size(page).unwrap_or((595.0, 842.0));
+            let mut pipeline = vellum_text::TextPipeline::new();
+            let blocks = pipeline.extract_page(&doc, page)?;
+
+            let cfg = vellum_render::OverlayConfig::default();
+            let overlay = vellum_render::render_overlay(page_w, page_h, &blocks, &cfg)
+                .ok_or_else(|| anyhow::anyhow!("渲染失败（页面尺寸为零？）"))?;
+
+            let out = output.unwrap_or_else(|| {
+                file.with_file_name(format!(
+                    "{}_p{page}_{stage}.png",
+                    file.file_stem().unwrap_or_default().to_string_lossy()
+                ))
+            });
+            overlay.save_png(&out).map_err(|e| anyhow::anyhow!("{e}"))?;
+            eprintln!("已保存调试图像：{}", out.display());
         }
 
         Command::Mapping { file, page } => {

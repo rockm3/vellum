@@ -1,0 +1,14 @@
+[package]
+name    = "vellum-viewer"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "vellum-viewer"
+path = "src/main.rs"
+
+[dependencies]
+vellum-pdf.workspace    = true
+vellum-text.workspace   = true
+vellum-render.workspace = true
+eframe.workspace        = true
