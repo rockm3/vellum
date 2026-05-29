@@ -37,10 +37,45 @@ cd vellum
 cargo build
 ```
 
-运行测试（需将 PDF 文件放入 `vellum-pdf/tests/assets/`）：
+测试用 PDF 放入 `vellum-pdf/tests/assets/`，文件名任意，`.pdf` 后缀即可。
+
+## 开发常用命令
 
 ```bash
-cargo test
+# ── 构建 ──────────────────────────────────────────────────────────────────────
+
+cargo build                          # debug 构建（全 workspace）
+cargo build --release                # release 构建
+cargo build -p vellum-text           # 只构建某个 crate
+cargo check                          # 只做类型检查，不生成产物（最快）
+cargo clippy -- -D warnings          # lint，视警告为错误
+
+# ── 测试 ──────────────────────────────────────────────────────────────────────
+
+cargo test                           # 全 workspace 所有测试
+cargo test -p vellum-text            # 只跑某个 crate 的所有测试
+cargo test -p vellum-text --lib      # 只跑单元测试（src/ 内 #[cfg(test)]）
+cargo test -p vellum-text --test interpreter          # 只跑某个集成测试文件
+cargo test -p vellum-text --lib -- cluster            # 按名称过滤测试
+cargo test -p vellum-text --lib -- --nocapture        # 显示 println! 输出
+cargo test -p vellum-text --test interpreter -- --nocapture  # 集成测试显示输出
+
+# ── 运行 CLI ──────────────────────────────────────────────────────────────────
+
+cargo run -p vellum-cli -- extract doc.pdf
+cargo run -p vellum-cli -- extract --page 2 doc.pdf
+cargo run -p vellum-cli -- extract --all doc.pdf
+cargo run -p vellum-cli -- inspect stream --page 0 doc.pdf
+cargo run -p vellum-cli -- inspect xref doc.pdf
+cargo run -p vellum-cli -- inspect xref --free doc.pdf
+
+# release 模式运行（速度更快）
+cargo run --release -p vellum-cli -- extract --all doc.pdf
+
+# ── 文档 ──────────────────────────────────────────────────────────────────────
+
+cargo doc --open                     # 生成并打开 workspace 文档
+cargo doc -p vellum-text --open      # 只生成某个 crate 的文档
 ```
 
 ## CLI 使用
